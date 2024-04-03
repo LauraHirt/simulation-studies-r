@@ -1,0 +1,217 @@
+---
+title: "Assessing the impact of violating the assumption of normality [assignment]"
+subtitle: "Within a Welches' independent *t*-test"
+author: "Ian Hussey (template) & Laura Hirt"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    highlight: haddock
+    theme: flatly
+    toc: yes
+    toc_float: yes
+---
+
+# Check your learning
+
+Distributions:
+
+-   The normal distribution is defined as two parameters, what are they?
+
+The normal distribution is defined by the mean and the standard deviation. A "Standard-Normalverteilung" has a mean of 0 and a sd of 1.
+
+-   The skew-normal distribution is defined as three parameters, what are they?
+
+The skew-normal distribution is defined by three parameters (one more than the normal distribution):
+
+'location', akin to mean, controlled via parameter 'xi' in `sn()`. In fact, mean is referred to as 'location' in many distributions. Central tendency.
+
+'scale', akin to SD, controlled via parameter 'omega' in `sn()`. Likewise, 'scale' is a common way of referring to measures of dispersion like SD. Measure of distribution.
+
+'slant'/'skew', controlled via parameter 'alpha' in `sn()`.
+
+Note that when alpha = 0, skew-normal data is the same as normal data.
+
+-   Which parameters of the normal distribution broadly correspond with which parameters of the skew-normal distribution?
+
+    The location corresponds with the mean; the scale with the sd
+
+-   When is a skew-normal distribution identical to a normal distribution?
+
+    The skew-normal distribution is equal to a normal distribution when the skew is set to zero (alpha = 0).
+
+(Violating the) assumptions of statistical inference tests:
+
+-   We all know that violating assumptions is bad. Bad for what? What property or properties of the test is the one we are usually concerned with being undermined when assumptions are violated?
+
+We are usually concerned with the alpha value / the p values being undermined when the assumptions are violated.
+
+# Apply your learning
+
+The code in the below chunk is adapted from "4_assumptions\_\_lesson.Rmd". Modify the code appropriately to create a simulation that answers the question **under what conditions does non-normality affect the results of the Welches' *t*-test?**
+
+Where non-normality is defined as:
+
+-   Data in the control condition that is either strongly left-skewed or strongly right-skewed (skew = -12 or +12).
+-   Data in the intervention condition that is either strongly left-skewed or strongly right-skewed (skew = -12 or +12).
+    -   NB You should summarize across conditions by whether the data either has a same vs. different non-normal distribution, so control-left-skewed and intervention-right-skewed and control-right-skewed and intervention-left-skewed are effectively the same, etc.
+
+Where analysis outcomes of interest are:
+
+-   The false-positive rate of *p* values.
+    -   NB false-positive rate only, not false-negative rate. So the population locations should be the same in both the control and intervention conditions.
+-   Estimates of Cohen's *d* (standardized effect sizes)
+    -   NB this will require you to modify the analysis function.
+
+```{r}
+
+# dependencies
+library(tidyr)
+library(dplyr)
+library(purrr) 
+library(ggplot2)
+library(sn)
+
+# simple plot of a normal distribution
+set.seed(42)
+
+```
+
+# The impact of non-normality on effect sizes and inferences from *p* values
+
+```{r}
+
+rm(list = ls())
+
+# define data generating function ----
+generate_data <- function(n_control,
+                          n_intervention,
+                          location_control, # location, akin to mean
+                          location_intervention,
+                          scale_control, # scale, akin to SD
+                          scale_intervention,
+                          skew_control, # slant/skew. When 0, produces normal/gaussian data
+                          skew_intervention) {
+  
+  data_control <- 
+    tibble(condition = "control",
+           score = rsn(n = n_control, 
+                       xi = location_control, # location, akin to mean
+                       omega = scale_control, # scale, akin to SD
+                       alpha = skew_control)) # slant/skew. When 0, produces normal/gaussian data
+  
+  data_intervention <- 
+    tibble(condition = "intervention",
+           score = rsn(n = n_intervention, 
+                       xi = location_intervention, # location, akin to mean
+                       omega = scale_intervention, # scale, akin to SD
+                       alpha = skew_intervention)) # slant/skew. When 0, produces normal/gaussian data
+  
+  data <- bind_rows(data_control,
+                    data_intervention) 
+  
+  return(data)
+}
+
+
+
+# define data analysis function ----
+analyse_data <- function(data) {
+  
+  res_t_test <- t.test(formula = score ~ condition, 
+                       data = data,
+                       var.equal = TRUE,
+                       alternative = "two.sided")
+  
+  res_cohens_d <- effsize::cohen.d(formula = score ~ condition,
+                                   within = FALSE,
+                                   data = data)
+  
+  res <- tibble(p = res_t_test$p.value,
+                cohens_d = res_cohens_d$estimate)
+
+  
+  return(res)
+}
+
+
+
+
+# set the seed ----
+# for the pseudo random number generator to make results reproducible
+set.seed(42)
+
+# define experiment parameters ----
+experiment_parameters_grid_c <- expand_grid(
+  n_control = 100,
+  n_intervention = 100,
+  location_control = 0, # location, akin to mean
+  location_intervention = 0,
+  scale_control = 1, # scale, akin to SD
+  scale_intervention = 1,
+  skew_control = c(-12, 12), # slant/skew. When 0, produces normal/gaussian data
+  skew_intervention = c(-12, 12),
+  iteration = 1:1000
+)
+  
+
+
+                                    
+                                  
+
+# run simulation ----
+simulation_c <- 
+  # using the experiment parameters
+  experiment_parameters_grid_c %>%
+  
+  # generate data using the data generating function and the parameters relevant to data generation
+  mutate(generated_data = pmap(list(n_control,
+                                    n_intervention,
+                                    location_control,
+                                    location_intervention,
+                                    scale_control,
+                                    scale_intervention,
+                                    skew_control,
+                                    skew_intervention),
+                               generate_data)) %>%
+  
+  # apply the analysis function to the generated data using the parameters relevant to analysis
+  mutate(analysis_results = pmap(list(generated_data),
+                                 analyse_data))
+  
+
+
+
+# summarise simulation results over the iterations ----
+
+simulation_c_summary <- simulation_c %>%
+  mutate(distribution_classification = ifelse(skew_control == skew_intervention, "Same non-normal", "Different non-normal")) %>%
+  unnest(analysis_results) %>%
+  group_by(distribution_classification, skew_control, skew_intervention) %>%
+  summarize(
+    false_positive_rate = janitor::round_half_up(mean(p < .05), digits = 3),
+    cohens_d = janitor::round_half_up(mean(cohens_d), digits = 3), .groups = "drop"
+  )
+
+
+
+# print results table
+simulation_c_summary |>
+  kable() |>
+  kable_classic(full_width = FALSE)
+
+
+
+```
+
+-   Please write a summary of your findings below. I.e., under what conditions does non-normality affect the results of the Welches' *t*-test?
+
+When the two populations tested with a Welches' t-test have the same non-normal distribution, the non-normality does not affect the results of the test as the false positive rate is close to the expected 5% level. However, when the two populations studied differ in their non-normal distributions, the non-normality severely affects the results of the Welches' t-test. The false positive rate equals 1, which means that although there is no true effect in the population, the t-test becomes statistically significant in all cases. Also the cohen's d effect size gets very large, although there is no true population effect and it should theoretically equal zero! So it seams that the violation of the normality assumption regarding Welches' t-test only poses a problem when the distributions of the two populations studied are different in their non-normality; as long as they have the same (non-)normal distribution, a violation does not impact the results of the test.
+
+# Session info
+
+```{r}
+
+sessionInfo()
+
+```
